@@ -3,6 +3,7 @@ package internal
 import (
 	"fmt"
 	"net/http"
+	"realtime_quiz_server/cache"
 
 	"github.com/gorilla/websocket"
 )
@@ -26,10 +27,30 @@ func ServeWebSocket(hub *Hub, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Lấy thông tin từ query parameters
+	query := r.URL.Query()
+	role := query.Get("role")
+	quizID := query.Get("quizId")
+	sessionID := query.Get("sessionId")
+
+	if role == "host" {
+		if _, err := cache.GetHostSession(sessionID); err != nil {
+			fmt.Println("Không tìm thấy session host:", sessionID)
+			return
+		}
+	} else {
+		if _, err := cache.GetPlayerSession(sessionID); err != nil {
+			fmt.Println("Không tìm thấy session player:", sessionID)
+			return
+		}
+	}
+
 	client := &Client{
-		ID:   r.RemoteAddr, // Sử dụng địa chỉ IP làm ID tạm thời
-		Conn: conn,
-		Send: make(chan []byte),
+		ID:     sessionID,
+		Role:   role,
+		QuizID: quizID,
+		Conn:   conn,
+		Send:   make(chan []byte),
 	}
 
 	// Đăng ký client vào Hub
@@ -40,6 +61,4 @@ func ServeWebSocket(hub *Hub, w http.ResponseWriter, r *http.Request) {
 
 	// Gửi tin nhắn đến client
 	go client.WriteMessages()
-
-	fmt.Printf("Client %s đã kết nối\n", client.ID)
 }

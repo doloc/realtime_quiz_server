@@ -48,6 +48,10 @@ func StoreHostSession(sessionID string, hostID string, expiresAt int64) error {
 	return Set("session:host:"+sessionID, jsonString, time.Hour)
 }
 
+func GetHostSession(sessionID string) (string, error) {
+	return Get("session:host:" + sessionID)
+}
+
 func DeleteHostSession(sessionID string) error {
 	return Delete("session:host:" + sessionID)
 }
@@ -90,9 +94,13 @@ func UpdateStatusToHostSession(sessionID string, status string) error {
 	return RedisClient.Expire(ctx, "session:host:"+sessionID, ttl).Err()
 }
 
-func StorePlayerSession(sessionID string, expiresAt int64) error {
-	jsonString := `{"session_id":"` + sessionID + `","role":"Player"` + `","expires_at":` + string(expiresAt) + `"}`
+func StorePlayerSession(sessionID string, name string, expiresAt int64) error {
+	jsonString := `{"session_id":"` + sessionID + `","role":"Player"` + `","name":` + name + `","expires_at":` + string(expiresAt) + `"}`
 	return Set("session:player:"+sessionID, jsonString, time.Hour)
+}
+
+func GetPlayerSession(sessionID string) (string, error) {
+	return Get("session:player:" + sessionID)
 }
 
 func DeletePlayerSession(sessionID string) error {

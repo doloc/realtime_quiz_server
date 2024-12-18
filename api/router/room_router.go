@@ -12,8 +12,8 @@ import (
 func RoomRouters(rg *gin.RouterGroup, store *gorm.DB, cf *configuration.Config) {
 	roomController := controller.NewRoomController(store)
 
-	authGroup := rg.Group("/room").Use(middleware.AuthMiddleware(cf))
+	roomGroup := rg.Group("/room").Use(middleware.AuthMiddleware(cf))
 	{
-		authGroup.POST("/create-room", roomController.CreateRoom())
+		roomGroup.POST("/create-room", roomController.CreateRoom())
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"realtime_quiz_server/configuration"
+	"realtime_quiz_server/token"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -38,7 +39,7 @@ func AuthMiddleware(cf *configuration.Config) gin.HandlerFunc {
 		}
 
 		accessToken := fields[1]
-		token, err := jwt.Parse(accessToken, func(token *jwt.Token) (interface{}, error) {
+		jwtToken, err := jwt.Parse(accessToken, func(token *jwt.Token) (interface{}, error) {
 			// This is a simple example, in a real application, you should use a secret key
 			return []byte(cf.TokenSymmetricKey), nil
 		})
@@ -48,19 +49,27 @@ func AuthMiddleware(cf *configuration.Config) gin.HandlerFunc {
 		}
 
 		// Check if the token is valid
-		if !token.Valid {
+		if !jwtToken.Valid {
 			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Token is invalid"})
 			return
 		}
 
 		// Get the user info from the token
-		claims, ok := token.Claims.(jwt.MapClaims)
+		claims, ok := jwtToken.Claims.(jwt.MapClaims)
 		if !ok {
 			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Error getting user info from token"})
 			return
 		}
 
-		ctx.Set(authorizationPayloadKey, claims)
+		data, _ := claims["data"].(map[string]interface{})
+
+		payload := &token.Payload{
+			Username:  data["username"].(string),
+			IssuedAt:  int64(data["issued_at"].(float64)),
+			ExpiredAt: int64(data["expired_at"].(float64)),
+		}
+
+		ctx.Set(authorizationPayloadKey, payload)
 		ctx.Next()
 	}
 }

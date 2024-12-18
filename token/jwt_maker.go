@@ -1,53 +1,14 @@
 package token
 
 import (
+	"realtime_quiz_server/utils"
 	"time"
 
 	"github.com/golang-jwt/jwt"
-	"github.com/mitchellh/mapstructure"
 )
 
-func ConvertStruct(i interface{}, o interface{}) error {
-	config := &mapstructure.DecoderConfig{
-		Result:           o,
-		WeaklyTypedInput: true,
-		TagName:          "json",
-	}
-
-	decoder, err := mapstructure.NewDecoder(config)
-	if err != nil {
-		return err
-	}
-
-	if err := decoder.Decode(i); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func ConvertStructToMap(i interface{}) (map[string]interface{}, error) {
-	var result map[string]interface{}
-	config := &mapstructure.DecoderConfig{
-		Metadata: nil,
-		Result:   &result,
-		TagName:  "json",
-	}
-
-	decoder, err := mapstructure.NewDecoder(config)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := decoder.Decode(i); err != nil {
-		return nil, err
-	}
-
-	return result, nil
-}
-
 func GenerateJWT(data interface{}, secretKey string) (string, error) {
-	dataMap, err := ConvertStructToMap(data)
+	dataMap, err := utils.ConvertStructToMap(data)
 	if err != nil {
 		return "", err
 	}

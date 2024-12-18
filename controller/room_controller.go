@@ -25,7 +25,7 @@ func (controller *roomController) CreateRoom() func(c *gin.Context) {
 		}
 
 		c.JSON(200, gin.H{
-			"room_id": id,
+			"roomId": id,
 		})
 	}
 }

@@ -12,9 +12,9 @@ import (
 func QuizRouters(rg *gin.RouterGroup, store *gorm.DB, cf *configuration.Config) {
 	quizController := controller.NewQuizController(store)
 
-	authGroup := rg.Group("/quiz").Use(middleware.AuthMiddleware(cf))
+	quizGroup := rg.Group("/quiz")
 	{
-		authGroup.POST("/create-quiz", quizController.CreateQuiz())
-		authGroup.POST("/start-quiz", quizController.StartQuiz())
+		quizGroup.POST("/join-quiz", quizController.JoinQuiz())
+		quizGroup.Use(middleware.AuthMiddleware(cf)).POST("/create-quiz", quizController.CreateQuiz())
 	}
 }

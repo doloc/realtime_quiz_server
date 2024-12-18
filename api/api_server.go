@@ -27,7 +27,7 @@ func NewServer(store *gorm.DB, cf *configuration.Config) *Server {
 	const BasePath = ""
 	apiGroup := r.Group(BasePath)
 	{
-		router.AccountRouters(apiGroup, store, cf)
+		router.AuthRouters(apiGroup, store, cf)
 		router.RoomRouters(apiGroup, store, cf)
 		router.QuizRouters(apiGroup, store, cf)
 		router.WebSocketRouter(apiGroup, server.hub)

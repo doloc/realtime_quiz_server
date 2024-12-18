@@ -13,12 +13,12 @@ import (
 	"gorm.io/gorm"
 )
 
-type accountController struct {
+type authController struct {
 	store *gorm.DB
 }
 
-func NewAuthController(store *gorm.DB) *accountController {
-	return &accountController{store: store}
+func NewAuthController(store *gorm.DB) *authController {
+	return &authController{store: store}
 }
 
 type LoginRequest struct {
@@ -26,7 +26,7 @@ type LoginRequest struct {
 	Password string `json:"password"`
 }
 
-func (controller *accountController) Login(cf *configuration.Config) func(c *gin.Context) {
+func (controller *authController) Login(cf *configuration.Config) func(c *gin.Context) {
 	return func(c *gin.Context) {
 		var requestBody LoginRequest
 		if err := c.ShouldBindJSON(&requestBody); err != nil {
@@ -63,10 +63,52 @@ func (controller *accountController) Login(cf *configuration.Config) func(c *gin
 			return
 		}
 
-		c.SetCookie("session_id", sessionID, 60*60, "/", "", false, true)
+		// c.SetCookie("session_id", sessionID, 60*60, "/", "", false, true)
+		// Thiết lập cookie với SameSite
+		cookie := &http.Cookie{
+			Name:     "session_id",
+			Value:    sessionID,
+			Path:     "/",
+			Expires:  time.Now().Add(1 * time.Hour),
+			HttpOnly: true,
+			Secure:   false,                // Đặt là false vì đang chạy localhost, chuyển thành true nếu chạy HTTPS
+			SameSite: http.SameSiteLaxMode, // Thiết lập SameSite
+		}
+
+		// Thêm cookie vào response
+		http.SetCookie(c.Writer, cookie)
 
 		c.JSON(http.StatusOK, gin.H{
-			"token": tokenString,
+			"message":   "Login successfully",
+			"token":     tokenString,
+			"sessionId": sessionID,
+		})
+	}
+}
+
+func (controller *authController) VerifyToken() func(c *gin.Context) {
+	return func(c *gin.Context) {
+		payload := c.MustGet("payload").(*token.Payload)
+		if payload == nil {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"message": "Unauthorized",
+			})
+			return
+		}
+
+		// create session
+		sessionID := session.GenerateHostSessionID(payload.Username)
+		err := cache.StoreHostSession(sessionID, payload.Username, time.Now().Add(time.Hour*24).Unix())
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"message": "Internal Server Error",
+			})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"message":   "Authorized",
+			"sessionId": sessionID,
 		})
 	}
 }
