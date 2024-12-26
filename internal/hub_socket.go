@@ -66,6 +66,19 @@ func (h *Hub) handleRegister(client *Client) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
+	// Kiểm tra nếu client đã tồn tại, thì chỉ cập nhật lại kết nối WebSocket
+	if existingClient, exists := h.Clients[client.ID]; exists {
+		// Đóng kết nối cũ
+		existingClient.Conn.Close()
+
+		// Cập nhật kết nối mới
+		existingClient.Conn = client.Conn
+		existingClient.Send = client.Send
+
+		fmt.Printf("Client %s đã reconnect thành công\n", client.ID)
+		return
+	}
+
 	if client.Role == "host" {
 		h.Hosts[client.QuizID] = client
 		fmt.Printf("Host đã kết nối tới quiz %s\n", client.QuizID)
@@ -132,7 +145,13 @@ func (c *Client) HandleMessages(hub *Hub) {
 	for {
 		_, message, err := c.Conn.ReadMessage()
 		if err != nil {
-			fmt.Printf("Lỗi đọc tin nhắn từ client %s: %v\n", c.ID, err)
+			fmt.Println("WebSocket Read error:", err)
+			// Kiểm tra lỗi mất kết nối
+			if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+				fmt.Printf("Client %s đã ngắt kết nối: %v\n", c.ID, err)
+			} else {
+				fmt.Printf("Lỗi không mong muốn từ client %s: %v\n", c.ID, err)
+			}
 			break
 		}
 
@@ -158,7 +177,11 @@ func (c *Client) HandleMessages(hub *Hub) {
 		default:
 			hub.Broadcast <- message
 		}
+
+		fmt.Printf("Received: %s\n", message)
 	}
+
+	fmt.Println("WebSocket disconnected")
 }
 
 // WriteMessages gửi tin nhắn tới client
@@ -191,10 +214,9 @@ func (h *Hub) StartQuiz(quizID string, questions []entity.Question) {
 	currentQuestion := 0
 	totalQuestions := len(questions)
 
-	// Bắt đầu vòng lặp câu hỏi
+	// Start quiz
 	go func() {
 		for currentQuestion < totalQuestions {
-			// Lấy câu hỏi hiện tại
 			question := questions[currentQuestion]
 
 			// Gửi câu hỏi tới client

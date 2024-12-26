@@ -22,6 +22,7 @@ func NewServer(store *gorm.DB, cf *configuration.Config) *Server {
 		hub:   internal.NewHub(),
 	}
 	r := gin.Default()
+
 	r.Use(middleware.CORSMiddleware())
 
 	const BasePath = ""

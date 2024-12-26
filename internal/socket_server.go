@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"net/http"
 	"realtime_quiz_server/cache"
+	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 )
 
@@ -20,15 +22,26 @@ func UpgradeConnection(w http.ResponseWriter, r *http.Request) (*websocket.Conn,
 }
 
 // ServeWebSocket xử lý một kết nối WebSocket từ client
-func ServeWebSocket(hub *Hub, w http.ResponseWriter, r *http.Request) {
-	conn, err := upgrader.Upgrade(w, r, nil)
+func ServeWebSocket(hub *Hub, c *gin.Context) {
+	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
-		fmt.Println("Lỗi nâng cấp WebSocket:", err)
+		fmt.Println("WebSocket Upgrade error:", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to upgrade connection"})
 		return
 	}
 
+	defer conn.Close()
+	fmt.Println("WebSocket connected")
+
+	// Thiết lập timeout
+	conn.SetReadDeadline(time.Now().Add(60 * time.Second)) // Timeout đọc
+	conn.SetPongHandler(func(string) error {
+		conn.SetReadDeadline(time.Now().Add(60 * time.Second)) // Gia hạn timeout sau mỗi lần nhận Pong
+		return nil
+	})
+
 	// Lấy thông tin từ query parameters
-	query := r.URL.Query()
+	query := c.Request.URL.Query()
 	role := query.Get("role")
 	quizID := query.Get("quizId")
 	sessionID := query.Get("sessionId")
@@ -61,4 +74,29 @@ func ServeWebSocket(hub *Hub, w http.ResponseWriter, r *http.Request) {
 
 	// Gửi tin nhắn đến client
 	go client.WriteMessages()
+
+	// Gửi Ping định kỳ tới client
+	// go client.SendPing()
+}
+
+// SendPing gửi một thông điệp ping đến client
+func (c *Client) SendPing() {
+	// check if client is still connected
+	if c.Conn == nil {
+		return
+	}
+	ticker := time.NewTicker(30 * time.Second) // Gửi ping mỗi 30 giây
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			err := c.Conn.WriteMessage(websocket.PingMessage, nil) // Gửi Ping
+			if err != nil {
+				fmt.Printf("Lỗi gửi ping tới client %s: %v\n", c.ID, err)
+				c.Conn.Close() // Đóng kết nối nếu có lỗi
+				return
+			}
+		}
+	}
 }
