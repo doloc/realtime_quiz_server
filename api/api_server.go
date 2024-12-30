@@ -5,6 +5,8 @@ import (
 	"realtime_quiz_server/api/router"
 	"realtime_quiz_server/configuration"
 	"realtime_quiz_server/internal"
+	"realtime_quiz_server/service"
+	"realtime_quiz_server/storage"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -17,9 +19,13 @@ type Server struct {
 }
 
 func NewServer(store *gorm.DB, cf *configuration.Config) *Server {
+	quizService := service.NewQuizService(storage.NewStorage(store))
+	questionService := service.NewQuestionService(storage.NewStorage(store))
+	answerService := service.NewAnswerService(storage.NewStorage(store))
+
 	server := &Server{
 		store: store,
-		hub:   internal.NewHub(),
+		hub:   internal.NewHub(quizService, questionService, answerService),
 	}
 	r := gin.Default()
 	r.Use(middleware.CORSMiddleware())

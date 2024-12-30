@@ -6,17 +6,17 @@ import (
 	"realtime_quiz_server/storage"
 )
 
-type questionService struct {
+type QuestionService struct {
 	storage storage.QuestionStorage
 }
 
-func NewQuestionService(storage storage.QuestionStorage) *questionService {
-	return &questionService{
+func NewQuestionService(storage storage.QuestionStorage) *QuestionService {
+	return &QuestionService{
 		storage: storage,
 	}
 }
 
-func (service *questionService) CreateQuestion(ctx context.Context, data *entity.Question) (*entity.Question, error) {
+func (service *QuestionService) CreateQuestion(ctx context.Context, data *entity.Question) (*entity.Question, error) {
 	var (
 		err    error
 		result entity.Question
@@ -28,4 +28,12 @@ func (service *questionService) CreateQuestion(ctx context.Context, data *entity
 	}
 
 	return &result, nil
+}
+
+func (service *QuestionService) GetQuestions(ctx context.Context, quizId string) ([]*entity.Question, error) {
+	result, err := service.storage.GetQuestions(quizId)
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
 }

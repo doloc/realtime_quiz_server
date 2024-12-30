@@ -1,16 +1,18 @@
 package storage
 
-import "realtime_quiz_server/entity"
+import (
+	"realtime_quiz_server/entity"
+	"realtime_quiz_server/entity/reference"
+)
 
 type QuizStorage interface {
 	BaseStorage
-	GetQuizByID(quizID int) (*entity.Quiz, error)
+	ChangeQuizStatus(quizID string, status reference.QuizStatus) (*entity.Quiz, error)
 }
 
-func (storage *storage) GetQuizByID(quizID int) (*entity.Quiz, error) {
+func (storage *storage) ChangeQuizStatus(quizID string, status reference.QuizStatus) (*entity.Quiz, error) {
 	quiz := &entity.Quiz{}
-	err := storage.db.First(quiz, quizID).Error
-	if err != nil {
+	if err := storage.db.Model(quiz).Where("id = ?", quizID).Update("status", status).Error; err != nil {
 		return nil, err
 	}
 	return quiz, nil
