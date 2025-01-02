@@ -30,15 +30,16 @@ import (
 // }
 
 func CORSMiddleware() gin.HandlerFunc {
-	allowedOrigins := []string{"http://localhost:5173,https://realtime-quiz-client.vercel.app/"}
+	// allowedOrigins := []string{"http://localhost:5173"}
 	return func(c *gin.Context) {
 		origin := c.Request.Header.Get("Origin")
-		for _, allowedOrigin := range allowedOrigins {
-			if origin == allowedOrigin {
-				c.Writer.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
-				break
-			}
-		}
+		// for _, allowedOrigin := range allowedOrigins {
+		// 	if origin == allowedOrigin {
+		// 		c.Writer.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
+		// 		break
+		// 	}
+		// }
+		c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
 		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
 		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With")
 		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE")
