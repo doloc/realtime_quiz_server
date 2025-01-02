@@ -30,6 +30,7 @@ func ServeWebSocket(hub *Hub, w http.ResponseWriter, r *http.Request) {
 	// Lấy thông tin từ query parameters
 	query := r.URL.Query()
 	role := query.Get("role")
+	name := query.Get("playerName")
 	quizID := query.Get("quizId")
 	sessionID := query.Get("sessionId")
 
@@ -48,6 +49,7 @@ func ServeWebSocket(hub *Hub, w http.ResponseWriter, r *http.Request) {
 	client := &Client{
 		ID:     sessionID,
 		Role:   role,
+		Name:   name,
 		QuizID: quizID,
 		Conn:   conn,
 		Send:   make(chan []byte),

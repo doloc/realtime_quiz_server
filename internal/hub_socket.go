@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"realtime_quiz_server/cache"
 	"realtime_quiz_server/entity"
 	"realtime_quiz_server/entity/reference"
 	"realtime_quiz_server/service"
+	"strconv"
 	"sync"
 	"time"
 
@@ -22,6 +24,7 @@ type Message struct {
 type Client struct {
 	ID     string
 	Role   string
+	Name   string
 	QuizID string
 	Conn   *websocket.Conn
 	Send   chan []byte
@@ -83,7 +86,7 @@ func (h *Hub) handleRegister(client *Client) {
 			h.Players[client.QuizID] = make(map[string]*Client)
 		}
 		h.Players[client.QuizID][client.ID] = client
-		h.notifyHost(client.QuizID, "PARTICIPANT_JOINED", client.ID)
+		h.notifyHost(client.QuizID, "PARTICIPANT_JOINED", client.ID, client.Name)
 		fmt.Printf("Player %s đã kết nối tới quiz %s\n", client.ID, client.QuizID)
 	}
 
@@ -100,7 +103,7 @@ func (h *Hub) handleUnregister(client *Client) {
 	} else if client.Role == "player" {
 		if players, ok := h.Players[client.QuizID]; ok {
 			delete(players, client.ID)
-			h.notifyHost(client.QuizID, "PARTICIPANT_LEFT", client.ID)
+			h.notifyHost(client.QuizID, "PARTICIPANT_LEFT", client.ID, client.Name)
 		}
 	}
 
@@ -121,14 +124,15 @@ func (h *Hub) handleBroadcast(message []byte) {
 	}
 }
 
-func (h *Hub) notifyHost(quizID, eventType, playerID string) {
+func (h *Hub) notifyHost(quizID, eventType, playerID string, name string) {
 	if host, ok := h.Hosts[quizID]; ok {
 		message := Message{
 			Type:    eventType,
-			Payload: map[string]string{"playerId": playerID},
+			Payload: map[string]string{"id": playerID, "name": name},
 		}
 		msgBytes, _ := json.Marshal(message)
 		host.Send <- msgBytes
+		fmt.Printf("Thông báo tới host quiz %s: %s\n", quizID, eventType)
 	}
 }
 
@@ -180,6 +184,24 @@ func (c *Client) HandleMessages(hub *Hub) {
 				fmt.Printf("Quiz %s đã kết thúc\n", c.QuizID)
 				go hub.SendQuizEndResult(c.QuizID)
 				fmt.Printf("Gửi kết quả cuối cùng của quiz %s\n", c.QuizID)
+			}
+		case "SUBMIT_ANSWER":
+			if c.Role == "player" {
+				// Lưu câu trả lời của người chơi
+				questionId := strconv.Itoa(int(msg.Payload.(map[string]interface{})["questionId"].(float64)))
+				answer := msg.Payload.(map[string]interface{})["answer"].(string)
+				err := cache.StorePlayerAnswer(c.QuizID, c.ID, questionId, time.Now().UnixMilli(), answer)
+				if err != nil {
+					fmt.Println("Lỗi lưu câu trả lời:", err)
+					return
+				}
+				fmt.Printf("Người chơi đã trả lời câu hỏi %s\n", c.QuizID)
+
+				err = cache.UpdateCounterPlayerAnswer(c.QuizID, questionId, answer)
+				if err != nil {
+					fmt.Println("Lỗi cập nhật số lần trả lời:", err)
+					return
+				}
 			}
 		default:
 			hub.Broadcast <- message
@@ -259,9 +281,17 @@ func (h *Hub) SendQuiz(quizID string, questions []*entity.Question, currentQuest
 			answersText[i] = answer.AnswerText
 		}
 
+		// Store question time to redis
+		err = cache.StoreQuestionTime(quizID, strconv.Itoa(int(question.ID)), time.Now().UnixMilli())
+		if err != nil {
+			fmt.Println("Lỗi lưu thời gian câu hỏi:", err)
+			return
+		}
+
 		// Gửi câu hỏi tới client
 		h.SendNextQuestion(
 			quizID,
+			int(question.ID),
 			currentQuestion+1,
 			totalQuestions,
 			question.QuestionText,
@@ -276,10 +306,79 @@ func (h *Hub) SendQuiz(quizID string, questions []*entity.Question, currentQuest
 
 			// Gửi kết quả tự động
 			// h.SendQuestionResult(quizID, question.CorrectAnswer, question.UserResponses)
+			var correctAnswer string
+			var userResponses = make(map[string]int)
 			for _, answer := range answers {
+				counter, err := cache.GetCounterPlayerAnswer(quizID, strconv.Itoa(int(question.ID)), answer.AnswerText)
+				if err != nil {
+					userResponses[answer.AnswerText] = 0
+				} else {
+					userResponses[answer.AnswerText] = int(counter)
+				}
 				if answer.IsCorrect {
-					h.SendQuestionResult(quizID, answer.AnswerText, map[string]string{"1": "2", "2": "3", "3": "4", "4": "1"})
-					break
+					correctAnswer = answer.AnswerText
+				}
+			}
+			fmt.Println("Câu trả lời:", userResponses)
+			h.SendQuestionResultToHost(quizID, correctAnswer, userResponses)
+
+			// Tính điểm cho người chơi
+			questionStartTime, err := cache.GetQuestionTime(quizID, strconv.Itoa(int(question.ID)))
+			if err != nil {
+				fmt.Println("Lỗi lấy thời gian câu hỏi:", err)
+				return
+			}
+			if players, ok := h.Players[quizID]; ok {
+				for playerId, _ := range players {
+					playerTime, playerAnswer, err := cache.GetPlayerAnswer(quizID, playerId, strconv.Itoa(int(question.ID)))
+					if err != nil {
+						fmt.Println("Lỗi lấy câu trả lời của người chơi1: ", quizID+" - "+playerId+" - "+strconv.Itoa(int(question.ID)))
+						continue
+					}
+					if playerAnswer == correctAnswer {
+						points := 1000 - (playerTime-questionStartTime)/int64(question.TimeLimit)
+						err = cache.UpdatePlayerScore(quizID, playerId, points)
+						if err != nil {
+							fmt.Println("Lỗi cập nhật điểm cho người chơi:", err)
+							continue
+						}
+					}
+				}
+			}
+
+			if players, ok := h.Players[quizID]; ok {
+				for playerId, client := range players {
+					playerTime, playerAnswer, err := cache.GetPlayerAnswer(quizID, playerId, strconv.Itoa(int(question.ID)))
+					if err != nil {
+						fmt.Println("Lỗi lấy câu trả lời của người chơi2: ", quizID+" - "+playerId+" - "+strconv.Itoa(int(question.ID)))
+						continue
+					}
+					if playerAnswer == correctAnswer {
+						points := 1000 - (playerTime-questionStartTime)/int64(question.TimeLimit)
+						totalPoints, err := cache.GetPlayerScore(quizID, playerId)
+						if err != nil {
+							fmt.Println("Lỗi lấy tổng điểm của người chơi:", err)
+							continue
+						}
+						ranking, err := cache.GetPlayerRanking(quizID, playerId)
+						if err != nil {
+							fmt.Println("Lỗi lấy xếp hạng của người chơi:", err)
+							continue
+						}
+						h.SendQuestionResultToPlayer(quizID, client, currentQuestion, true, int(points), int(totalPoints), int(ranking))
+					} else {
+						totalPoints, err := cache.GetPlayerScore(quizID, playerId)
+						if err != nil {
+							fmt.Println("Lỗi lấy tổng điểm của người chơi:", err)
+							continue
+						}
+						ranking, err := cache.GetPlayerRanking(quizID, playerId)
+						if err != nil {
+							fmt.Println("Lỗi lấy xếp hạng của người chơi:", err)
+							continue
+						}
+						h.SendQuestionResultToPlayer(quizID, client, currentQuestion, false, 0, int(totalPoints), int(ranking))
+					}
 				}
 			}
 		}(quizID, question)
@@ -295,7 +394,7 @@ func (h *Hub) SendQuiz(quizID string, questions []*entity.Question, currentQuest
 	}()
 }
 
-func (h *Hub) SendNextQuestion(quizID string, currentQuestion, totalQuestions int, questionContent string, answers []string, timeLimit int) {
+func (h *Hub) SendNextQuestion(quizID string, questionId int, currentQuestion, totalQuestions int, questionContent string, answers []string, timeLimit int) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -304,6 +403,7 @@ func (h *Hub) SendNextQuestion(quizID string, currentQuestion, totalQuestions in
 		Type: "QUESTION_REQUEST",
 		Payload: map[string]interface{}{
 			"quizId":          quizID,
+			"questionId":      questionId,
 			"question":        questionContent,
 			"answers":         answers,
 			"currentQuestion": currentQuestion,
@@ -312,15 +412,6 @@ func (h *Hub) SendNextQuestion(quizID string, currentQuestion, totalQuestions in
 		},
 	}
 
-	// message := map[string]interface{}{
-	// 	"type":            "QUESTION_REQUEST",
-	// 	"quizId":          quizID,
-	// 	"question":        questionContent,
-	// 	"answers":         answers,
-	// 	"currentQuestion": currentQuestion,
-	// 	"totalQuestion":   totalQuestion,
-	// 	"timeLimit":       timeLimit,
-	// }
 	messageBytes, _ := json.Marshal(message)
 
 	// Gửi câu hỏi tới host của quiz
@@ -338,7 +429,7 @@ func (h *Hub) SendNextQuestion(quizID string, currentQuestion, totalQuestions in
 	fmt.Printf("Gửi câu hỏi tới quiz %s: %v\n", quizID, message)
 }
 
-func (h *Hub) SendQuestionResult(quizID string, answer string, userResponses map[string]string) {
+func (h *Hub) SendQuestionResultToHost(quizID string, answer string, userResponses map[string]int) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -347,10 +438,15 @@ func (h *Hub) SendQuestionResult(quizID string, answer string, userResponses map
 	// for _, userAnswer := range userResponses {
 	// 	answerStats[userAnswer]++
 	// }
+
 	// convert map to array
-	answerStats := make([]int, 4)
+	// answerStats := make([]int, len(userResponses))
+	i := 0
+	totalAnswered := 0
 	for _, userAnswer := range userResponses {
-		answerStats[userAnswer[0]-'1']++
+		// answerStats[i] = userAnswer
+		totalAnswered += userAnswer
+		i++
 	}
 
 	// Tạo payload kết quả
@@ -359,17 +455,10 @@ func (h *Hub) SendQuestionResult(quizID string, answer string, userResponses map
 		Payload: map[string]interface{}{
 			"quizId":        quizID,
 			"correctAnswer": answer,
-			"totalAnswered": len(userResponses),
-			"answerStats":   answerStats,
+			"totalAnswered": totalAnswered,
+			"answerStats":   userResponses,
 		},
 	}
-	// message := map[string]interface{}{
-	// 	"type":        "QUESTION_RESULT",
-	// 	"quizId":      quizID,
-	// 	"answer":      answer,
-	// 	"userCount":   len(userResponses),
-	// 	"answerStats": answerStats,
-	// }
 	messageBytes, _ := json.Marshal(message)
 
 	// Gui ket qua cau hoi toi host
@@ -377,14 +466,31 @@ func (h *Hub) SendQuestionResult(quizID string, answer string, userResponses map
 		host.Send <- messageBytes
 	}
 
-	// Gửi kết quả tới tất cả các client trong quiz
-	if players, ok := h.Players[quizID]; ok {
-		for _, player := range players {
-			player.Send <- messageBytes
-		}
-	}
+	fmt.Printf("Gửi kết quả câu hỏi tới host quiz %s: %v\n", quizID, message)
+}
 
-	fmt.Printf("Gửi kết quả câu hỏi tới quiz %s: %v\n", quizID, message)
+func (h *Hub) SendQuestionResultToPlayer(quizID string, player *Client, currentQuestion int, isCorrect bool, points int, totalPoints int, ranking int) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	// Tạo payload kết quả
+	message := Message{
+		Type: "PLAYER_QUESTION_RESULT",
+		Payload: map[string]interface{}{
+			"quizId":          quizID,
+			"currentQuestion": currentQuestion,
+			"isCorrect":       isCorrect,
+			"points":          points,
+			"totalPoints":     totalPoints,
+			"ranking":         ranking + 1,
+		},
+	}
+	messageBytes, _ := json.Marshal(message)
+
+	// Gửi kết quả tới player
+	player.Send <- messageBytes
+
+	fmt.Printf("Gửi kết quả câu hỏi tới player quiz %s: %v\n", quizID, message)
 }
 
 func (h *Hub) SendLeaderBoard(quizID string) {
@@ -399,17 +505,49 @@ func (h *Hub) SendLeaderBoard(quizID string) {
 	}
 
 	// Giả sử có dữ liệu điểm số từ userResponses hoặc một hệ thống lưu trữ
-	leaderBoard := []map[string]interface{}{}
+	leaderboard := []map[string]interface{}{}
 
-	if players, ok := h.Players[quizID]; ok {
-		for playerID := range players {
-			// Ví dụ: Điểm của mỗi người chơi được tính ở đây (cần tích hợp logic scoring)
-			score := 0
-			leaderBoard = append(leaderBoard, map[string]interface{}{
-				"playerId": playerID,
-				"score":    score,
-			})
+	// if players, ok := h.Players[quizID]; ok {
+	// 	for playerID := range players {
+	// 		// Ví dụ: Điểm của mỗi người chơi được tính ở đây (cần tích hợp logic scoring)
+	// 		score := 100
+	// 		leaderboard = append(leaderboard, map[string]interface{}{
+	// 			"playerId":   playerID,
+	// 			"playerName": "Player",
+	// 			"score":      score,
+	// 		})
+	// 	}
+	// }
+
+	cacheLeaderboard, err := cache.GetLeaderboard(quizID)
+	if err != nil {
+		fmt.Println("Lỗi lấy bảng xếp hạng:", err)
+		return
+	}
+	mapLeaderboard, err := cache.MutilGetPlayerScore(quizID, cacheLeaderboard)
+	if err != nil {
+		fmt.Println("Lỗi lấy điểm của người chơi:", err)
+		return
+	}
+	for _, playerID := range cacheLeaderboard {
+		playerInfo, err := cache.GetPlayerSession(playerID)
+		if err != nil {
+			fmt.Println("Lỗi lấy thông tin người chơi:", err)
+			continue
 		}
+		// convert string to json
+		var player map[string]interface{}
+		err = json.Unmarshal([]byte(playerInfo), &player)
+		if err != nil {
+			fmt.Println("Lỗi chuyển đổi thông tin người chơi:", err, " - ", playerInfo)
+			continue
+		}
+		playerName := player["name"].(string)
+		leaderboard = append(leaderboard, map[string]interface{}{
+			"playerId":   playerID,
+			"playerName": playerName,
+			"score":      mapLeaderboard[playerID],
+		})
 	}
 
 	// Tạo payload LEADER_BOARD
@@ -417,25 +555,15 @@ func (h *Hub) SendLeaderBoard(quizID string) {
 		Type: "LEADER_BOARD",
 		Payload: map[string]interface{}{
 			"quizId":      quizID,
-			"leaderBoard": leaderBoard,
+			"leaderboard": leaderboard,
 		},
 	}
-	// message := map[string]interface{}{
-	// 	"type":        "LEADER_BOARD",
-	// 	"quizId":      quizID,
-	// 	"leaderBoard": leaderBoard,
-	// }
 	messageBytes, _ := json.Marshal(message)
 
 	// Gửi LEADER_BOARD tới host
 	if host, ok := h.Hosts[quizID]; ok {
 		host.Send <- messageBytes
 	}
-	// if players, ok := h.Players[quizID]; ok {
-	// 	for _, player := range players {
-	// 		player.Send <- messageBytes
-	// 	}
-	// }
 	fmt.Printf("Gửi bảng xếp hạng tới host quiz %s: %v\n", quizID, message)
 }
 
@@ -444,15 +572,25 @@ func (h *Hub) SendQuizEndResult(quizID string) {
 	defer h.mu.Unlock()
 
 	// calculate score for each player
-	leaderBoard := []map[string]interface{}{}
+	leaderboard := []map[string]interface{}{}
 	if players, ok := h.Players[quizID]; ok {
 		for playerID := range players {
 			// Ví dụ: Điểm của mỗi người chơi được tính ở đây (cần tích hợp logic scoring)
-			score := 0
-			leaderBoard = append(leaderBoard, map[string]interface{}{
+			score, err := cache.GetPlayerScore(quizID, playerID)
+			if err != nil {
+				fmt.Println("Lỗi lấy điểm của người chơi:", err)
+				continue
+			}
+			leaderboard = append(leaderboard, map[string]interface{}{
 				"playerId": playerID,
 				"score":    score,
 			})
+
+			ranking, err := cache.GetPlayerRanking(quizID, playerID)
+			if err != nil {
+				fmt.Println("Lỗi lấy xếp hạng của người chơi:", err)
+				continue
+			}
 
 			// send result to player
 			message := Message{
@@ -460,7 +598,7 @@ func (h *Hub) SendQuizEndResult(quizID string) {
 				Payload: map[string]interface{}{
 					"quizId":      quizID,
 					"score":       score,
-					"ranking":     1,
+					"ranking":     ranking + 1,
 					"totalPlayer": len(players),
 				},
 			}

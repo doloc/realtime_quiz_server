@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	gonanoid "github.com/matoous/go-nanoid/v2"
 	"gorm.io/gorm"
 )
 
@@ -48,7 +49,7 @@ func NewQuizController(store *gorm.DB) *quizController {
 // }
 
 type QuizPayload struct {
-	RoomID string `json:"roomId"`
+	// RoomID string `json:"roomId"`
 	Config struct {
 		Title       string `json:"title"`
 		Description string `json:"description"`
@@ -84,9 +85,16 @@ func (controller *quizController) CreateQuiz() func(c *gin.Context) {
 			return
 		}
 
+		id, err := gonanoid.New()
+		if err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
 		// Create Quiz
 		quiz := entity.Quiz{
-			ID:          payload.RoomID,
+			ID:          id,
 			Title:       payload.Config.Title,
 			Description: payload.Config.Description,
 			Type:        reference.PUBLIC, // Hoặc parse từ payload.Config.Type
@@ -137,7 +145,7 @@ func (controller *quizController) CreateQuiz() func(c *gin.Context) {
 
 		c.JSON(http.StatusOK, gin.H{
 			"message": "Create Room Successfully",
-			"quizId":  quiz.ID,
+			"quizId":  id,
 		})
 	}
 }
