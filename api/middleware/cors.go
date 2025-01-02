@@ -30,7 +30,7 @@ import (
 // }
 
 func CORSMiddleware() gin.HandlerFunc {
-	allowedOrigins := []string{"http://localhost:5173"}
+	allowedOrigins := []string{"http://localhost:5173,https://realtime-quiz-client.vercel.app/"}
 	return func(c *gin.Context) {
 		origin := c.Request.Header.Get("Origin")
 		for _, allowedOrigin := range allowedOrigins {
